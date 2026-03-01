@@ -1,0 +1,132 @@
+/* ── presenter_dark.css — dark theme ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Georgia', serif;
+  background: #0d1117;
+  color: #e6edf3;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.slide-wrapper {
+  display: flex;
+  flex: 1;
+  padding: 48px 64px 24px 64px;
+  gap: 48px;
+  align-items: flex-start;
+}
+
+.slide-left {
+  flex: 1 1 55%;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+h1 {
+  font-size: 2.6rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #58a6ff;
+  border-bottom: 3px solid #58a6ff44;
+  padding-bottom: 16px;
+}
+
+ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+ul li {
+  font-size: 1.25rem;
+  line-height: 1.5;
+  padding-left: 28px;
+  position: relative;
+  color: #cdd9e5;
+}
+
+ul li::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+  color: #58a6ff;
+  font-size: 1rem;
+  top: 3px;
+}
+
+p {
+  font-size: 1rem;
+  color: #8b949e;
+  line-height: 1.6;
+  font-style: italic;
+  margin-top: 8px;
+}
+
+.slide-right {
+  flex: 0 0 36%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+img {
+  max-width: 100%;
+  max-height: 460px;
+  border-radius: 12px;
+  border: 2px solid #30363d;
+  box-shadow: 0 8px 32px #00000088;
+  object-fit: cover;
+}
+
+.slide-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 64px;
+  border-top: 1px solid #21262d;
+  font-size: 0.78rem;
+  color: #484f58;
+  flex-shrink: 0;
+}
+
+.slide-footer a { color: #58a6ff; text-decoration: none; }
+.slide-footer a:hover { text-decoration: underline; }
+
+.logo {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #58a6ff;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.waiting {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  color: #484f58;
+  letter-spacing: 0.08em;
+}
+
+.ws-status {
+  position: fixed;
+  bottom: 8px;
+  right: 12px;
+  font-size: 0.65rem;
+  color: #30363d;
+  font-family: monospace;
+}
+.ws-status.connected { color: #3fb950; }
+.ws-status.reconnecting { color: #d29922; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.slide-wrapper { animation: fadeIn 0.45s ease; }

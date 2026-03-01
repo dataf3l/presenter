@@ -3,16 +3,18 @@
 presenter.py
 
 Flask app on port 5001.
-- Watches current_slide.html for changes using watchdog (no more meta-refresh flicker).
-- Browser polls /api/version every 500ms; only reloads when the version changes.
-- Injects full CSS layout: H1 + bullets left, image right, footer with source.
-- Smooth fade-in animation preserved; flicker eliminated.
+- Watches current_slide.html via mtime polling (background thread).
+- Pushes "reload" message to all connected browsers via WebSocket (flask-sock).
+- No meta-refresh, no polling from the browser — zero flicker.
+- Dark / light theme via URL param: http://localhost:5001/?theme=light
+- CSS lives in presenter_dark.css / presenter_light.css (same directory).
+- Works over plain HTTP — no HTTPS needed for WebSocket on localhost.
+
+Install:
+    pip install flask flask-sock
 
 Usage:
-    python presenter.py [--slide path/to/current_slide.html] [--port 5001]
-
-Requires:
-    pip install flask watchdog
+    python presenter.py [--slide current_slide.html] [--port 5001]
 """
 
 import argparse
@@ -20,173 +22,119 @@ import os
 import re
 import time
 import threading
-from flask import Flask, Response, jsonify
+import json
+from flask import Flask, Response, request, send_from_directory
+from flask_sock import Sock
 
 app = Flask(__name__)
+sock = Sock(app)
 
-SLIDE_PATH = os.path.join(os.path.dirname(__file__), "current_slide.html")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SLIDE_PATH = os.path.join(HERE, "current_slide.html")
 
-# Shared state — updated by the watchdog thread
+# ---------------------------------------------------------------------------
+# Shared state
+# ---------------------------------------------------------------------------
 _state = {
-    "version": 0,          # increments every time file changes
-    "html": "",            # last raw HTML read from disk
+    "version": 0,
+    "html": "",
     "lock": threading.Lock(),
 }
 
+# Active WebSocket clients
+_clients: set = set()
+_clients_lock = threading.Lock()
+
+
+def _broadcast(msg: str):
+    """Send a message to all connected WebSocket clients."""
+    dead = set()
+    with _clients_lock:
+        clients = set(_clients)
+    for ws in clients:
+        try:
+            ws.send(msg)
+        except Exception:
+            dead.add(ws)
+    if dead:
+        with _clients_lock:
+            _clients.difference_update(dead)
+
 
 # ---------------------------------------------------------------------------
-# CSS
+# File watcher (background thread)
 # ---------------------------------------------------------------------------
-INJECTED_STYLE = """
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  body {
-    font-family: 'Georgia', serif;
-    background: #0d1117;
-    color: #e6edf3;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .slide-wrapper {
-    display: flex;
-    flex: 1;
-    padding: 48px 64px 24px 64px;
-    gap: 48px;
-    align-items: flex-start;
-  }
-
-  .slide-left {
-    flex: 1 1 55%;
-    display: flex;
-    flex-direction: column;
-    gap: 28px;
-  }
-
-  h1 {
-    font-size: 2.6rem;
-    font-weight: 700;
-    line-height: 1.2;
-    color: #58a6ff;
-    border-bottom: 3px solid #58a6ff44;
-    padding-bottom: 16px;
-  }
-
-  ul {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-  }
-
-  ul li {
-    font-size: 1.25rem;
-    line-height: 1.5;
-    padding-left: 28px;
-    position: relative;
-    color: #cdd9e5;
-  }
-
-  ul li::before {
-    content: '▸';
-    position: absolute;
-    left: 0;
-    color: #58a6ff;
-    font-size: 1rem;
-    top: 3px;
-  }
-
-  p {
-    font-size: 1rem;
-    color: #8b949e;
-    line-height: 1.6;
-    font-style: italic;
-    margin-top: 8px;
-  }
-
-  .slide-right {
-    flex: 0 0 36%;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-  }
-
-  img {
-    max-width: 100%;
-    max-height: 460px;
-    border-radius: 12px;
-    border: 2px solid #30363d;
-    box-shadow: 0 8px 32px #00000088;
-    object-fit: cover;
-  }
-
-  .slide-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 64px;
-    border-top: 1px solid #21262d;
-    font-size: 0.78rem;
-    color: #484f58;
-    flex-shrink: 0;
-  }
-
-  .slide-footer a { color: #58a6ff; text-decoration: none; }
-  .slide-footer a:hover { text-decoration: underline; }
-
-  .logo {
-    font-weight: 700;
-    font-size: 1.1rem;
-    color: #58a6ff;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-  }
-
-  .waiting {
-    display: flex;
-    flex: 1;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.6rem;
-    color: #484f58;
-    letter-spacing: 0.08em;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(12px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  .slide-wrapper { animation: fadeIn 0.45s ease; }
-</style>
-"""
-
-# JS that polls /api/version every 500 ms and only reloads on change — no flicker
-POLLING_JS = """
-<script>
-  (function() {
-    var current = null;
-    function check() {
-      fetch('/api/version')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (current === null) { current = data.version; return; }
-          if (data.version !== current) { location.reload(); }
-        })
-        .catch(function() {});
-    }
-    setInterval(check, 500);
-  })();
-</script>
-"""
+def watch_slide(slide_path: str):
+    last_mtime = None
+    print(f"[watcher] monitoring: {slide_path}", flush=True)
+    while True:
+        try:
+            if os.path.exists(slide_path):
+                mtime = os.path.getmtime(slide_path)
+                if mtime != last_mtime:
+                    last_mtime = mtime
+                    with open(slide_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    with _state["lock"]:
+                        _state["html"] = content
+                        _state["version"] += 1
+                        v = _state["version"]
+                    print(f"[watcher] updated → v{v} | broadcasting to clients", flush=True)
+                    _broadcast(json.dumps({"event": "reload", "version": v}))
+        except Exception as e:
+            print(f"[watcher] error: {e}", flush=True)
+        time.sleep(0.2)
 
 
 # ---------------------------------------------------------------------------
 # HTML builder
 # ---------------------------------------------------------------------------
 
-def build_page(raw_html: str) -> str:
+def _css_tag(theme: str) -> str:
+    fname = "presenter_light.css" if theme == "light" else "presenter_dark.css"
+    return f'<link rel="stylesheet" href="/{fname}">'
+
+
+# Minimal inline WebSocket client — auto-reconnects, HTTP only
+WS_CLIENT_JS = """
+<script>
+(function() {
+  var statusEl = document.getElementById('ws-status');
+  var delay = 1000;
+
+  function connect() {
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var ws = new WebSocket(proto + '//' + location.host + '/ws');
+
+    ws.onopen = function() {
+      delay = 1000;
+      if (statusEl) { statusEl.textContent = '● live'; statusEl.className = 'ws-status connected'; }
+    };
+
+    ws.onmessage = function(e) {
+      try {
+        var msg = JSON.parse(e.data);
+        if (msg.event === 'reload') { location.reload(); }
+      } catch(err) {}
+    };
+
+    ws.onclose = function() {
+      if (statusEl) { statusEl.textContent = '○ reconnecting…'; statusEl.className = 'ws-status reconnecting'; }
+      setTimeout(connect, delay);
+      delay = Math.min(delay * 2, 10000);  // exponential back-off, max 10s
+    };
+
+    ws.onerror = function() { ws.close(); };
+  }
+
+  connect();
+})();
+</script>
+"""
+
+
+def build_page(raw_html: str, theme: str) -> str:
     body_match = re.search(r"<body[^>]*>(.*?)</body>", raw_html, re.S | re.I)
     body_content = body_match.group(1).strip() if body_match else raw_html
 
@@ -213,7 +161,7 @@ def build_page(raw_html: str) -> str:
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{page_title}</title>
-  {INJECTED_STYLE}
+  {_css_tag(theme)}
 </head>
 <body>
   <div class="slide-wrapper">
@@ -227,53 +175,26 @@ def build_page(raw_html: str) -> str:
     {source_html}
     <span>Powered by Wikipedia &amp; AI</span>
   </div>
-  {POLLING_JS}
+  <span id="ws-status" class="ws-status reconnecting">○ connecting…</span>
+  {WS_CLIENT_JS}
 </body>
 </html>"""
 
 
-def waiting_page() -> str:
+def waiting_page(theme: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Live Lecture</title>
-  {INJECTED_STYLE}
+  {_css_tag(theme)}
 </head>
 <body>
   <div class="waiting">Waiting for lecture to begin…</div>
-  {POLLING_JS}
+  <span id="ws-status" class="ws-status reconnecting">○ connecting…</span>
+  {WS_CLIENT_JS}
 </body>
 </html>"""
-
-
-# ---------------------------------------------------------------------------
-# Watchdog thread — watches the slide file, updates shared state
-# ---------------------------------------------------------------------------
-
-def watch_slide(slide_path: str):
-    """
-    Poll the slide file's mtime every 200 ms.
-    When it changes, read the new content and bump the version counter.
-    (Uses simple mtime polling — no extra watchdog dependency needed.)
-    """
-    last_mtime = None
-    print(f"[watcher] monitoring: {slide_path}", flush=True)
-    while True:
-        try:
-            if os.path.exists(slide_path):
-                mtime = os.path.getmtime(slide_path)
-                if mtime != last_mtime:
-                    last_mtime = mtime
-                    with open(slide_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    with _state["lock"]:
-                        _state["html"] = content
-                        _state["version"] += 1
-                    print(f"[watcher] slide updated → version {_state['version']}", flush=True)
-        except Exception as e:
-            print(f"[watcher] error: {e}", flush=True)
-        time.sleep(0.2)
 
 
 # ---------------------------------------------------------------------------
@@ -282,18 +203,22 @@ def watch_slide(slide_path: str):
 
 @app.route("/")
 def index():
+    theme = request.args.get("theme", "dark")
     with _state["lock"]:
         html = _state["html"]
     if not html:
-        return Response(waiting_page(), mimetype="text/html")
-    return Response(build_page(html), mimetype="text/html")
+        return Response(waiting_page(theme), mimetype="text/html")
+    return Response(build_page(html, theme), mimetype="text/html")
 
 
-@app.route("/api/version")
-def api_version():
-    with _state["lock"]:
-        v = _state["version"]
-    return jsonify({"version": v})
+@app.route("/presenter_dark.css")
+def css_dark():
+    return send_from_directory(HERE, "presenter_dark.css", mimetype="text/css")
+
+
+@app.route("/presenter_light.css")
+def css_light():
+    return send_from_directory(HERE, "presenter_light.css", mimetype="text/css")
 
 
 @app.route("/raw")
@@ -309,8 +234,33 @@ def raw():
 def health():
     with _state["lock"]:
         v = _state["version"]
-    return jsonify({"status": "ok", "version": v,
-                    "slide_path": app.config.get("SLIDE_PATH", SLIDE_PATH)})
+    with _clients_lock:
+        n = len(_clients)
+    return {"status": "ok", "version": v, "connected_clients": n}
+
+
+# ---------------------------------------------------------------------------
+# WebSocket endpoint
+# ---------------------------------------------------------------------------
+
+@sock.route("/ws")
+def ws_endpoint(ws):
+    with _clients_lock:
+        _clients.add(ws)
+    # Send current version immediately on connect
+    with _state["lock"]:
+        v = _state["version"]
+    try:
+        ws.send(json.dumps({"event": "connected", "version": v}))
+        # Keep alive — flask-sock closes when this function returns
+        while True:
+            try:
+                ws.receive(timeout=30)   # heartbeat / keep-alive
+            except Exception:
+                break
+    finally:
+        with _clients_lock:
+            _clients.discard(ws)
 
 
 # ---------------------------------------------------------------------------
@@ -327,10 +277,10 @@ if __name__ == "__main__":
 
     app.config["SLIDE_PATH"] = args.slide
 
-    # Start file watcher in background
     t = threading.Thread(target=watch_slide, args=(args.slide,), daemon=True)
     t.start()
 
-    print(f"[presenter] slide: {args.slide}")
-    print(f"[presenter] open  http://localhost:{args.port}/")
+    print(f"[presenter] slide : {args.slide}")
+    print(f"[presenter] dark  : http://localhost:{args.port}/")
+    print(f"[presenter] light : http://localhost:{args.port}/?theme=light")
     app.run(host="0.0.0.0", port=args.port, debug=False)

@@ -1,0 +1,132 @@
+/* ── presenter_light.css — light theme (for bright projectors / video beam) ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Georgia', serif;
+  background: #ffffff;
+  color: #1a1a2e;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.slide-wrapper {
+  display: flex;
+  flex: 1;
+  padding: 48px 64px 24px 64px;
+  gap: 48px;
+  align-items: flex-start;
+}
+
+.slide-left {
+  flex: 1 1 55%;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+h1 {
+  font-size: 2.6rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #1a5cb5;
+  border-bottom: 3px solid #1a5cb544;
+  padding-bottom: 16px;
+}
+
+ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+ul li {
+  font-size: 1.25rem;
+  line-height: 1.5;
+  padding-left: 28px;
+  position: relative;
+  color: #2d3748;
+}
+
+ul li::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+  color: #1a5cb5;
+  font-size: 1rem;
+  top: 3px;
+}
+
+p {
+  font-size: 1rem;
+  color: #718096;
+  line-height: 1.6;
+  font-style: italic;
+  margin-top: 8px;
+}
+
+.slide-right {
+  flex: 0 0 36%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+img {
+  max-width: 100%;
+  max-height: 460px;
+  border-radius: 12px;
+  border: 2px solid #e2e8f0;
+  box-shadow: 0 4px 16px #0000001a;
+  object-fit: cover;
+}
+
+.slide-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 64px;
+  border-top: 1px solid #e2e8f0;
+  font-size: 0.78rem;
+  color: #a0aec0;
+  flex-shrink: 0;
+}
+
+.slide-footer a { color: #1a5cb5; text-decoration: none; }
+.slide-footer a:hover { text-decoration: underline; }
+
+.logo {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #1a5cb5;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.waiting {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  color: #a0aec0;
+  letter-spacing: 0.08em;
+}
+
+.ws-status {
+  position: fixed;
+  bottom: 8px;
+  right: 12px;
+  font-size: 0.65rem;
+  color: #cbd5e0;
+  font-family: monospace;
+}
+.ws-status.connected { color: #38a169; }
+.ws-status.reconnecting { color: #d69e2e; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.slide-wrapper { animation: fadeIn 0.45s ease; }
