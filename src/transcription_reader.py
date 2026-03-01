@@ -128,7 +128,7 @@ PROMPT_TEMPLATE_ES = """\
 Eres un generador de slides en vivo
 
 Tema: {topic}
-Objectivo: {objective}
+Objetivo: {objective}
 
 Contexto Previo: {previous}
 
@@ -138,8 +138,8 @@ Genera SOLO este JSON (no markdown, no texto estra):
 {{"wikipedia_queries":["<noun 1>","<noun 2>","<noun 3>"],"headline":"<titulo de 5-8 palabras>","bullets":["<fact>","<fact>","<fact>"]}}
 
 Reglas:
-- wikipedia_queries: 3 frases nominales (specie, conceptos, personas, lugares, eventos) los cuales probablemente tengan una foto en Wikipedia. Ordenados por relevancia a el Audio actual.
-- headline: specifico and "punchy", directamente acerca de lo que es esta diciendo.
+- wikipedia_queries: 3 frases nominales (specie, conceptos, personas, lugares, eventos) los cuales probablemente tengan una foto en Wikipedia. Ordenados por relevancia al Audio actual.
+- headline: específico e impactactante, directamente acerca de lo que es esta diciendo.
 - bullets: de 3 a 5 hechos, de una frase, directamente relacionados con el audio, varia el angulo y la longitud (No fluff).
 - Unicamente JSON.\
 """
