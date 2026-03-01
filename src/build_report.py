@@ -324,8 +324,8 @@ def pdf_playwright(html_path: str, pdf_path: str) -> bool:
 
 def pdf_wkhtmltopdf(html_path: str, pdf_path: str) -> bool:
     try:
-        result = subprocess.run(
-            ["wkhtmltopdf",
+        result = subprocess.run( 
+            ["c:/Program Files/wkhtmltopdf/bin/wkhtmltopdf.exe",
              "--page-size", "A4",
              "--orientation", "Landscape",
              "--enable-local-file-access",

@@ -57,8 +57,9 @@ def screenshot_playwright(html_path: str, png_path: str) -> bool:
 def screenshot_wkhtmltoimage(html_path: str, png_path: str) -> bool:
     """Take a screenshot using wkhtmltoimage."""
     try:
+        # todo if windows if linux
         result = subprocess.run(
-            ["wkhtmltoimage", "--width", "1280", html_path, png_path],
+            ["c:/Program Files/wkhtmltopdf/bin/wkhtmltoimage.exe", "--width", "1280", html_path, png_path],
             capture_output=True, timeout=15
         )
         return result.returncode == 0

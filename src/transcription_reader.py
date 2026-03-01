@@ -31,7 +31,7 @@ LLM_API_URL = "http://localhost:5006/generate"
 LLM_MODEL = "cohere"
 LINES_PER_BATCH = 5
 DEFAULT_OVERLAP = 1
-
+LANGUAGE = "English"
 
 # ---------------------------------------------------------------------------
 # Wikipedia helpers
@@ -84,7 +84,7 @@ def wikipedia_summary_single(query: str) -> Optional[dict]:
         return None
 
 
-def wikipedia_best(queries: list) -> dict:
+def wikipedia_best(queries: list, language: str) -> dict:
     """Try each query; return first result with image, or first result, or {}."""
     first_ok = None
     for query in queries:
@@ -124,10 +124,32 @@ Rules:
 - JSON only.\
 """
 
+PROMPT_TEMPLATE_ES = """\
+Eres un generador de slides en vivo
 
-def build_prompt(topic: str, objective: str, previous: str, current: str) -> str:
+Tema: {topic}
+Objectivo: {objective}
+
+Contexto Previo: {previous}
+
+Nuevo Audio: {current}
+
+Genera SOLO este JSON (no markdown, no texto estra):
+{{"wikipedia_queries":["<noun 1>","<noun 2>","<noun 3>"],"headline":"<titulo de 5-8 palabras>","bullets":["<fact>","<fact>","<fact>"]}}
+
+Reglas:
+- wikipedia_queries: 3 frases nominales (specie, conceptos, personas, lugares, eventos) los cuales probablemente tengan una foto en Wikipedia. Ordenados por relevancia a el Audio actual.
+- headline: specifico and "punchy", directamente acerca de lo que es esta diciendo.
+- bullets: de 3 a 5 hechos, de una frase, directamente relacionados con el audio, varia el angulo y la longitud (No fluff).
+- Unicamente JSON.\
+"""
+
+def build_prompt(topic: str, objective: str, previous: str, current: str, language: str) -> str:
+    prompt_template = PROMPT_TEMPLATE
+    if language == "spanish" or language == "es":
+        prompt_template = PROMPT_TEMPLATE_ES
     prev = previous.strip() or "(first slide)"
-    return PROMPT_TEMPLATE.format(
+    return prompt_template.format(
         topic=topic,
         objective=objective,
         previous=prev,
@@ -139,8 +161,10 @@ def build_prompt(topic: str, objective: str, previous: str, current: str) -> str
 # LLM call
 # ---------------------------------------------------------------------------
 
-def ask_llm(topic: str, objective: str, previous: str, current: str) -> Optional[dict]:
-    prompt = build_prompt(topic, objective, previous, current)
+def ask_llm(topic: str, objective: str, previous: str, current: str, language: str) -> Optional[dict]:
+    prompt = build_prompt(topic, objective, previous, current, language)
+    print(prompt)
+    print(language)
     payload = {"document": prompt, "model_name": LLM_MODEL}
     try:
         resp = requests.post(LLM_API_URL, json=payload, timeout=30)
@@ -161,7 +185,7 @@ def ask_llm(topic: str, objective: str, previous: str, current: str) -> Optional
 # Slide writer
 # ---------------------------------------------------------------------------
 
-def write_slide(wiki: dict, llm_data: dict, slide_path: str):
+def write_slide(wiki: dict, llm_data: dict, slide_path: str, language: str):
     title = llm_data.get("headline", wiki.get("title", "Slide"))
     bullets = llm_data.get("bullets", [])
     extract = wiki.get("extract", "")[:400]
@@ -205,8 +229,8 @@ def write_slide(wiki: dict, llm_data: dict, slide_path: str):
 # ---------------------------------------------------------------------------
 
 def process_batch(topic: str, objective: str, previous: str,
-                  current: str, slide_path: str):
-    llm_data = ask_llm(topic, objective, previous, current)
+                  current: str, slide_path: str, language: str):
+    llm_data = ask_llm(topic, objective, previous, current, language)
     if not llm_data:
         print("[pipeline] LLM returned nothing, skipping.", file=sys.stderr)
         return
@@ -215,8 +239,8 @@ def process_batch(topic: str, objective: str, previous: str,
     if not queries:
         queries = [llm_data.get("wikipedia_query", topic)]
 
-    wiki = wikipedia_best(queries)
-    write_slide(wiki, llm_data, slide_path)
+    wiki = wikipedia_best(queries, language)
+    write_slide(wiki, llm_data, slide_path, language)
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +263,8 @@ def main():
                         help="LLM model name passed to the API  (default: cohere)")
     parser.add_argument("--slide", default=SLIDE_PATH,
                         help="Output slide path  (default: ./current_slide.html)")
+    parser.add_argument("--language", default=LANGUAGE,
+                        help="Language for Slides  (default: English)")
     args = parser.parse_args()
 
     LLM_MODEL = args.model
@@ -271,7 +297,7 @@ def main():
             t = threading.Thread(
                 target=process_batch,
                 args=(args.topic, args.objective, previous_batch,
-                      current_text, args.slide),
+                      current_text, args.slide, args.language),
                 daemon=True,
             )
             t.start()
