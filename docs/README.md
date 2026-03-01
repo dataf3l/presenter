@@ -1,15 +1,20 @@
-# Live Lecture Slide System
-
-Real-time AI-powered slides generated from live speech transcription.
+# Live Lecture Slide System — Full Pipeline
 
 ```
-[transcription tool] ──stdout──▶ transcription_reader.py ──▶ current_slide.html
-                                        │                            ▲
-                                        ▼                            │
-                                 LLM API (:5006)              presenter.py (:5001)
-                                        │                            │
-                                        ▼                       [browser]
-                                 Wikipedia REST API
+[transcription tool]
+        │ stdout
+        ▼
+transcription_reader.py  ──▶  current_slide.html
+        │ (LLM + Wikipedia)          │
+        │                            ├──▶  presenter.py  :5001  [browser display]
+        │                            │         (filesystem watcher, no flicker)
+        │                            │
+        │                            └──▶  slide_watcher.py
+        │                                       │
+        │                                  ./lecture/versions/slide_NNNN_*.html
+        │                                  ./lecture/images/slide_NNNN.png
+        │
+        └────────── build_report.py ──▶  ./lecture/report.html + report.pdf
 ```
 
 ---
@@ -18,89 +23,106 @@ Real-time AI-powered slides generated from live speech transcription.
 
 | File | Purpose |
 |------|---------|
-| `transcription_reader.py` | Reads stdin, batches every N lines, asks LLM to pick a Wikipedia query + bullet points, fetches Wikipedia, writes `current_slide.html` |
-| `presenter.py` | Flask app on port 5001 – serves `current_slide.html` with injected CSS, auto-refreshes every 500 ms |
-| `current_slide.html` | Shared file written by the pipeline, read by the presenter |
+| `transcription_reader.py` | Reads stdin → LLM → 3 Wikipedia queries → best image → `current_slide.html` |
+| `presenter.py` | Flask :5001 — serves slide with CSS, JS polls `/api/version`, reloads only on change (no flicker) |
+| `slide_watcher.py` | Watches `current_slide.html`, saves versioned HTMLs + PNG screenshots |
+| `build_report.py` | Combines all versioned slides into `report.html` + `report.pdf` |
 
 ---
 
-## Quick Start
+## Install
 
-### 1. Install dependencies
 ```bash
 pip install flask requests
+
+# For screenshots and PDF (choose one):
+pip install playwright && playwright install chromium
+# OR install wkhtmltopdf from https://wkhtmltopdf.org/
 ```
 
-### 2. Start the presenter (open this in the browser first)
+---
+
+## Usage
+
+### 1. Start the presenter (open in browser)
 ```bash
-python presenter.py
+python presenter.py --lecture "Biology 101"
 # Open http://localhost:5001/
 ```
 
-### 3. Pipe your transcription tool into the reader
+### 2. Start the slide watcher (archives every version + screenshots)
 ```bash
-your_transcription_tool | python transcription_reader.py --topic "Neural Networks"
+python slide_watcher.py --lecture my_biology_lecture
+# Saves to ./my_biology_lecture/versions/ and ./my_biology_lecture/images/
 ```
 
-Or test with a text file:
+### 3. Pipe your transcription tool
 ```bash
-cat my_lecture_notes.txt | python transcription_reader.py --topic "Quantum Computing"
+your_transcription_tool | python transcription_reader.py \
+    --topic "BASIC BIOLOGY" --lines 2 --model groq
+
+# Or test with a file:
+python simulate.py my_notes.txt | python transcription_reader.py --topic "Biology"
+```
+
+### 4. Generate the report (after lecture)
+```bash
+python build_report.py \
+    --versions ./my_biology_lecture/versions \
+    --images   ./my_biology_lecture/images \
+    --out      ./my_biology_lecture \
+    --title    "Biology 101 — March 2026"
+# Opens report.html in browser → Ctrl+P for PDF
+# Or if playwright/wkhtmltopdf installed: report.pdf is auto-generated
 ```
 
 ---
 
-## Options
+## Key improvements over v1
 
-### transcription_reader.py
-```
---topic   Overall lecture topic shown to the LLM  (default: "General Knowledge")
---lines   Lines to batch before calling LLM        (default: 3)
---model   LLM model name for the API              (default: groq)
-```
+### No more flicker
+- Removed `<meta http-equiv="refresh">` 
+- Browser JS polls `/api/version` every 500ms
+- Page only reloads when the file actually changes → animation plays once, cleanly
 
-### presenter.py
-```
---slide   Path to current_slide.html              (default: ./current_slide.html)
---port    HTTP port                               (default: 5001)
-```
+### Better images
+- LLM now returns **3 Wikipedia queries** ordered by preference
+- System tries each query; uses the first one that has an image
+- For each match, tries **1200px Action API** image first, falls back to summary thumbnail
+- Result: dramatically more slides with images
 
----
+### Slide archiving
+- `slide_watcher.py` saves every slide version with a timestamp
+- Screenshots captured automatically (Playwright or wkhtmltoimage)
 
-## How the LLM prompt works
-
-The LLM receives:
-- The overall lecture topic
-- The last N lines of transcription
-
-It returns JSON like:
-```json
-{
-  "wikipedia_query": "neural network backpropagation",
-  "headline": "How Neural Networks Learn",
-  "bullets": [
-    "Backpropagation adjusts weights using gradient descent.",
-    "Each layer learns increasingly abstract representations.",
-    "Learning rate controls the size of each weight update."
-  ]
-}
-```
-
-The pipeline then:
-1. Fetches `https://en.wikipedia.org/api/rest_v1/page/summary/<query>`
-2. Gets the extract + thumbnail image URL
-3. Writes a minimal HTML file
-4. The presenter injects CSS and serves it
+### Report generation  
+- `build_report.py` reads all versioned slides, embeds screenshots
+- Outputs one styled HTML with print page-breaks
+- Auto-generates PDF if playwright or wkhtmltopdf is available
 
 ---
 
-## LLM API (client)
+## Command reference
 
-The system POSTs to `http://localhost:5006/generate`:
-```json
-{ "document": "<full prompt>", "model_name": "groq" }
+```bash
+# transcription_reader.py
+--topic    "BASIC BIOLOGY"     # lecture topic for LLM context
+--lines    2                   # lines to batch (lower = faster slides)
+--model    groq                # LLM model name
+--slide    current_slide.html  # output file
+
+# presenter.py
+--slide    current_slide.html  # file to watch and serve
+--port     5001                # HTTP port
+
+# slide_watcher.py
+--slide    current_slide.html  # file to watch
+--lecture  my_lecture          # folder name for output
+
+# build_report.py
+--versions ./my_lecture/versions
+--images   ./my_lecture/images
+--out      ./my_lecture
+--title    "My Lecture Title"
+--no-pdf   # skip PDF step
 ```
-Response:
-```json
-{ "response": "<LLM text output>" }
-```
-Change `LLM_API_URL` or `LLM_MODEL` at the top of `transcription_reader.py` to point at a different host/model.

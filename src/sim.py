@@ -10,6 +10,6 @@ try:
             # .strip() removes the extra newline from the file since print() adds one
             print(line.strip())
             sys.stdout.flush() 
-            time.sleep(1)
+            time.sleep(3)
 except FileNotFoundError:
     print(f"Error: {filename} not found.")
